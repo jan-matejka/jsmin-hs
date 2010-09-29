@@ -116,5 +116,5 @@ main = do
 	args <- getArgs
 	if length(args) > 0
 		then putStrLn ("// "++(head args))
-		else putStrLn ""
+		else putStr ""
 	moar s_start [] 
