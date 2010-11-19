@@ -1,4 +1,5 @@
 {- jsmin.hs
+   2010-09-29
 Copyright (c) 2010 Jan Yac Matejka (yac.blesmrt.net)
 Copyright (c) 2002 Douglas Crockford  (www.crockford.com)
 
@@ -68,70 +69,111 @@ consume xs = xs
 ommit :: String -> String
 ommit xs = ""
 
-until' :: String -> (String -> String) ->  (String,String) -> PartialParserResult
+until' :: String -> (String -> String) ->  WorkReg -> (WorkReg,Bool)
 until' xs f (a,b)
-	| length xs > length a = (a,b,False)
-	| take (length xs) a == xs = (drop (length xs) a, b++(f xs), True)
+	| length xs > length a = ((a,b),False)
+	| take (length xs) a == xs = ((drop (length xs) a, b++(f xs)), True)
 	| True = until' xs f (tail a, b++(f [head a]))
 
 
-type PartialParserResult = (String,String,Bool)
-type PartialParser = (String,String) -> PartialParserResult 
-type ParseState = (String, String, PartialParser)
---              buffer, result, parser
+type Buffer = String
+type Result = String
+type StateId = String
+type WorkReg = (Buffer,Result)
+type JsminState = (WorkReg, StateId)
+type Enclose = Char
+type Escaped = Bool
+-- -------------------------------------
+type StateHandler = WorkReg -> JsminState
+type ParseString = WorkReg -> Enclose -> Escaped -> JsminState
 
-parse_code :: (String,String) -> PartialParserResult
-parse_code ([],b) = ([],b,True)
 
-parse_code (a,b) =
-	case (head a) of
-		'"' ->  parse_string (tail a, b++"\"STR")
-		'\'' -> parse_string' (tail a, b++"'STR2")
-		'/' ->
-			case (take 2 a) of
-				"//" -> parse_comment_inline (a,b++"CM")
-				"/*" -> parse_comment_multiline (a,b++"CM2")
-				_ -> parse_regexp (tail a,b++"RE")
-		_ -> parse_code (tail a,b++[head a])
+stateId2Parser :: StateId -> StateHandler
+stateId2Parser x = 
+	case x of
+		"string" -> s_string
+		"regexp" -> s_regexp
+		"comment" -> s_comment
+		"comment_inline" -> s_comment_inline
+		"code" -> s_code
+		_ -> error "bollox"
 
-parse_regexp = until' "/" consume
-parse_string' = until' "'" consume
-parse_string :: (String,String) -> PartialParserResult
-parse_string = until' "\"" consume
-parse_comment_inline = until' "\n" ommit
-parse_comment_multiline = until' "*/" ommit
+s_code :: StateHandler
+s_code ('/':('/':bs),r) = (("//"++bs,r),"comment_inline")
+s_code ('/':('*':bs),r) = (("/*"++bs,r),"comment")
+s_code ('/':bs,r) = (("/"++bs,r),"regexp")
+s_code ('"':bs,r) = ((['"']++bs,r),"string")
+s_code ('\'':bs,r) = ((['\'']++bs,r),"string")
+s_code (b:bs,r) = ((bs,r++[b]),"code")
+s_code ([],r) = (([],r),"code")
 
-parse :: State ParseState ParseState
-parse = do
-	(a,b,f) <- get
-	let (a1,b1,finished) = f (a,b)
-	if finished
-		then return (a1,b1,parse_code)
-		else do
-			put (a1,b1,f)
-			return (a1,b1,f)
 
-parse2 (a,b,f) = do
-	let (a1,b1,flag) = f (a,b)
-	if flag
-		then (a1,b1,f)
-		else (a1,b1,parse_code)
+--s_comment_inline :: StateHandler
+s_comment_inline wr = do
+	let (wr1,_) = until' "\n" ommit wr
+	(wr1,"code")
 
-moar :: ParseState -> IO ()
-moar state = do
---	let (a,b,f) = evalState (parse) state
-	let (a,b,f) = parse2 state
-	putStr b
-	iseof <- IO.isEOF
-	if iseof
-		then return ()
-		else do
-			l <- IO.getLine
-			moar (a++l++"\n","",f)
+s_comment :: StateHandler
+s_comment wr = do
+	let (wr1,f) = until' "/*" ommit wr
+	if f then (wr1,"code")
+		else (wr1,"comment_inline")
+
+s_string::StateHandler
+s_string (bs,r) = p_string (bs,r) (head bs) True
+
+s_regexp::StateHandler 
+s_regexp (bs,r) = p_regexp (bs,r) False
+
+p_regexp :: WorkReg -> Escaped -> JsminState
+p_regexp ([],r) ed = (([],r),"regexp")
+p_regexp ('\\':bs,r) False = p_regexp (bs,r++"\\") True
+p_regexp ('\\':bs,r) True = p_regexp (bs,r++"\\") False
+p_regexp (b:bs,r) ed
+	| (b == '/') = if (ed == False)
+		then ((bs,r++"/"),"code")
+		else p_regexp (bs,r++[b]) False
+	| True = p_regexp (bs,r++[b]) False
+
+
+p_string :: ParseString
+p_string ([],r) en ed = (([],r),"string")
+p_string ('\\':bs,r) en False = p_string (bs,r++"\\") en True
+p_string ('\\':bs,r) en True = p_string (bs,r++"\\") en False
+p_string (b:bs,r) en ed
+	| (b == en) = if (ed == False)
+		then ((bs,r++[en]),"code")
+		else p_string (bs,r++[b]) en False
+	| True = p_string (bs,r++[b]) en False
+
+
+is_end_state :: String -> Bool
+is_end_state s = s `elem` ["code"]
+
+jsmin :: State JsminState JsminState
+jsmin = do
+	((b,r),sid) <- get
+	let (reg,sid) = stateId2Parser(sid) (b,r)
+	put (reg,sid)
+	if (null (fst reg)) 
+		then if is_end_state(sid)
+			then return (reg,sid)
+			else error ("Error: Unterminated "++sid)
+		else jsmin
+
+usage :: String -> String
+usage p = "Usage: "++p++" [<comment>] < <file to minify>"
+
+comment :: [String] -> String -> String
+comment (x:[]) _ = "// "++x
+comment (x:xs) p = usage p
+comment ([]) _ = ""
 
 main = do
+	progname <- getProgName
 	args <- getArgs
-	if not (null args)
-		then putStrLn ("// "++(head args))
-		else putStr ""
-	moar ("","",parse_code)
+	putStrLn $ comment args progname
+
+	input <- getContents
+	let ((b,r),sid) = evalState (jsmin) ((input,""),"code")
+	putStr r
