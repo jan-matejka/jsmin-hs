@@ -108,14 +108,14 @@ s_code (b:bs,r) = ((bs,r++[b]),"code")
 s_code ([],r) = (([],r),"code")
 
 
---s_comment_inline :: StateHandler
+s_comment_inline :: StateHandler
 s_comment_inline wr = do
 	let (wr1,_) = until' "\n" ommit wr
 	(wr1,"code")
 
 s_comment :: StateHandler
 s_comment wr = do
-	let (wr1,f) = until' "/*" ommit wr
+	let (wr1,f) = until' "*/" ommit wr
 	if f then (wr1,"code")
 		else (wr1,"comment_inline")
 
@@ -134,7 +134,6 @@ p_regexp (b:bs,r) ed
 		then ((bs,r++"/"),"code")
 		else p_regexp (bs,r++[b]) False
 	| True = p_regexp (bs,r++[b]) False
-
 
 p_string :: ParseString
 p_string ([],r) en ed = (([],r),"string")
@@ -162,7 +161,7 @@ jsmin = do
 		else jsmin
 
 usage :: String -> String
-usage p = "Usage: "++p++" [<comment>] < <file to minify>"
+usage p = "Usage: "++p++" ([<comment>] < <file to minify>) | <-t>"
 
 comment :: [String] -> String -> String
 comment (x:[]) _ = "// "++x
@@ -172,8 +171,28 @@ comment ([]) _ = ""
 main = do
 	progname <- getProgName
 	args <- getArgs
-	putStrLn $ comment args progname
+	if not (null args) && (head args) == "-t"
+		then run_tests
+		else run_jsmin args
 
+run_jsmin args = do
+	progname <- getProgName
+	putStrLn $ comment args progname
 	input <- getContents
 	let ((b,r),sid) = evalState (jsmin) ((input,""),"code")
 	putStr r
+
+
+run_tests = do
+	test "comment" "/*a*/b" (("b",""),"code")
+	test "comment" "/*/b" (("",""),"comment")
+	test "comment_inline" "// " (("",""),"code")
+
+test :: String -> String -> JsminState -> IO ()
+test state input wr = do
+	let ((b,r),s) = (stateId2Parser state) (input,"")
+	putStrLn $ "test "++state++" "++input
+	putStrLn $"result: "++r ++ " ;buffer: "++b++ " ;state: "++s
+	putStrLn $ "test result: "++(if ((b,r),s) == wr then "WIN" else "FAIL")
+	putStrLn ""
+
