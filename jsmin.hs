@@ -114,16 +114,18 @@ s_comment_inline wr = do
 	(wr1,"code")
 
 s_comment :: StateHandler
+s_comment (b:[],r) = jsmin_error "comment"
 s_comment wr = do
 	let (wr1,f) = until' "*/" ommit wr
 	if f then (wr1,"code")
-		else (wr1,"comment_inline")
+		else jsmin_error "comment"
+
 
 s_string::StateHandler
 s_string (bs,r) = p_string (bs,r) (head bs) True
 
 s_regexp::StateHandler 
-s_regexp (bs,r) = p_regexp (bs,r) False
+s_regexp (bs,r) = p_regexp (bs,r) True
 
 p_regexp :: WorkReg -> Escaped -> JsminState
 p_regexp ([],r) ed = (([],r),"regexp")
@@ -157,8 +159,11 @@ jsmin = do
 	if (null (fst reg)) 
 		then if is_end_state(sid)
 			then return (reg,sid)
-			else error ("Error: Unterminated "++sid)
+			else jsmin_error sid
 		else jsmin
+
+--jsmin_error :: String -> 
+jsmin_error s = error ("Error: Unterminated "++s)
 
 usage :: String -> String
 usage p = "Usage: "++p++" ([<comment>] < <file to minify>) | <-t>"
@@ -186,7 +191,21 @@ run_jsmin args = do
 run_tests = do
 	test "comment" "/*a*/b" (("b",""),"code")
 	test "comment" "/*/b" (("",""),"comment")
-	test "comment_inline" "// " (("",""),"code")
+	test "comment_inline" "//a" (("",""),"code")
+	test "comment_inline" "//a\nb" (("b","\n"),"code")
+	test_e "comment" "/*!" (jsmin_error "comment")
+	test "string" "\"a\"b" (("b","\"a\""),"code")
+	test "string" "\"a\\\"b\"c" (("c","\"a\\\"b\""),"code")
+	test "string" "''a" (("a","''"),"code")
+	test "string" "'a'b" (("b","'a'"),"code")
+	test "string" "'a\\'b'c" (("c","'a\\'b'"),"code")
+	test "regexp" "/a/b" (("b","/a/"),"code")
+	test "regexp" "/a\\/b/" (("","/a\\/b/"),"code")
+	test "code" "//a" (("//a",""),"comment_inline")
+	test "code" "'a" (("'a",""),"string")
+	test "code" "\"a" (("\"a",""),"string")
+	test "code" "/*a" (("/*a",""),"comment")
+	test "code" "/a" (("/a",""),"regexp")
 
 test :: String -> String -> JsminState -> IO ()
 test state input wr = do
@@ -195,4 +214,9 @@ test state input wr = do
 	putStrLn $"result: "++r ++ " ;buffer: "++b++ " ;state: "++s
 	putStrLn $ "test result: "++(if ((b,r),s) == wr then "WIN" else "FAIL")
 	putStrLn ""
+
+test_e state input e = do
+		let ((b,r),s) = (stateId2Parser state) (input,"")
+
+		putStrLn ""
 
