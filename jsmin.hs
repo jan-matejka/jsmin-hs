@@ -154,15 +154,14 @@ is_end_state s = s `elem` ["code"]
 jsmin :: State JsminState JsminState
 jsmin = do
 	((b,r),sid) <- get
-	let (reg,sid) = stateId2Parser(sid) (b,r)
-	put (reg,sid)
+	let (reg,sid2) = stateId2Parser(sid) (b,r)
+	put (reg,sid2)
 	if (null (fst reg)) 
-		then if is_end_state(sid)
-			then return (reg,sid)
-			else jsmin_error sid
+		then if is_end_state(sid2)
+			then return (reg,sid2)
+			else jsmin_error sid2
 		else jsmin
 
---jsmin_error :: String -> 
 jsmin_error s = error ("Error: Unterminated "++s)
 
 usage :: String -> String
@@ -187,7 +186,6 @@ run_jsmin args = do
 	let ((b,r),sid) = evalState (jsmin) ((input,""),"code")
 	putStr r
 
-
 run_tests = do
 	test "comment" "/*a*/b" (("b",""),"code")
 	test "comment" "/*/b" (("",""),"comment")
@@ -206,26 +204,30 @@ run_tests = do
 	test "code" "\"a" (("\"a",""),"string")
 	test "code" "/*a" (("/*a",""),"comment")
 	test "code" "/a" (("/a",""),"regexp")
+	test "code" "" (("",""),"code")
 	test_until
 
---until' :: String -> (String -> String) ->  WorkReg -> (WorkReg,Bool)
---until' xs f (a,b)
-	
 test_until = do
 	let ((buf,res),_) = until' "dd" (consume) ("adda","")
 	putStrLn "test until' \"dd\" (consume) (\"adda\",\"\")"
 	putStrLn $ "test result: "++(if res == "add" && buf == "a" then "WIN" else "FAIL")
+	putStrLn ""
+	let ((buf,res),_) = until' "dd" (ommit) ("adda","")
+	putStrLn "test until' \"dd\" (ommit) (\"adda\",\"\")"
+	putStrLn $ "test result: "++(if res == "" && buf == "a" then "WIN" else "FAIL")
+	putStrLn ""
 
+-- tests if the input state makes correct the nearest state switch
 test :: String -> String -> JsminState -> IO ()
-test state input wr = do
+test state input ((be,re),se) = do
 	let ((b,r),s) = (stateId2Parser state) (input,"")
 	putStrLn $ "test "++state++" "++input
 	putStrLn $"result: "++r ++ " ;buffer: "++b++ " ;state: "++s
-	putStrLn $ "test result: "++(if ((b,r),s) == wr then "WIN" else "FAIL")
+	putStrLn $ "test result: "++(if b == be && r == re && s == se then "WIN" else "FAIL")
 	putStrLn ""
 
+-- @TODO
 test_e state input e = do
 		let ((b,r),s) = (stateId2Parser state) (input,"")
-
 		putStrLn ""
 
