@@ -192,7 +192,7 @@ run_tests = do
 	test "comment" "/*a*/b" (("b",""),"code")
 	test "comment" "/*/b" (("",""),"comment")
 	test "comment_inline" "//a" (("",""),"code")
-	test "comment_inline" "//a\nb" (("b","\n"),"code")
+	test "comment_inline" "//a\nb" (("b",""),"code")
 	test_e "comment" "/*!" (jsmin_error "comment")
 	test "string" "\"a\"b" (("b","\"a\""),"code")
 	test "string" "\"a\\\"b\"c" (("c","\"a\\\"b\""),"code")
@@ -206,6 +206,15 @@ run_tests = do
 	test "code" "\"a" (("\"a",""),"string")
 	test "code" "/*a" (("/*a",""),"comment")
 	test "code" "/a" (("/a",""),"regexp")
+	test_until
+
+--until' :: String -> (String -> String) ->  WorkReg -> (WorkReg,Bool)
+--until' xs f (a,b)
+	
+test_until = do
+	let ((buf,res),_) = until' "dd" (consume) ("adda","")
+	putStrLn "test until' \"dd\" (consume) (\"adda\",\"\")"
+	putStrLn $ "test result: "++(if res == "add" && buf == "a" then "WIN" else "FAIL")
 
 test :: String -> String -> JsminState -> IO ()
 test state input wr = do
