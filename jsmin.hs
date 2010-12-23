@@ -63,106 +63,91 @@ nl_post_keeper x
 re_pre_keeper :: Char -> Bool
 re_pre_keeper x = elem x "(,=:[!&|?{};\n"
 
-consume :: String -> String
-consume xs = xs
-
-ommit :: String -> String
-ommit xs = ""
-
-until' :: String -> (String -> String) ->  WorkReg -> (WorkReg,Bool)
-until' xs f (a,b)
-	| length xs > length a = ((a,b),False)
-	| take (length xs) a == xs = ((drop (length xs) a, b++(f xs)), True)
-	| True = until' xs f (tail a, b++(f [head a]))
-
-
-type Buffer = String
+type Buffer = Char
 type Result = String
-type StateId = String
-type WorkReg = (Buffer,Result)
-type JsminState = (WorkReg, StateId)
+type S_String_Type = Char -- " or '
+
+data StateId = S_String S_String_Type
+	| S_Code
+	| S_Regexp
+	| S_CommentInline
+	| S_CommentMulti
+	deriving (Show) -- for debug
+
+type ResultBuffer = String -- max 2 chars long
+type JsminState = (ResultBuffer,Result,StateId)
+type WorkReg = (Buffer,ResultBuffer)
+
 type Enclose = Char
 type Escaped = Bool
 -- -------------------------------------
-type StateHandler = WorkReg -> JsminState
+type StateHandler = Buffer -> ResultBuffer -> JsminState
 type ParseString = WorkReg -> Enclose -> Escaped -> JsminState
-
 
 stateId2Parser :: StateId -> StateHandler
 stateId2Parser x = 
 	case x of
-		"string" -> s_string
-		"regexp" -> s_regexp
-		"comment" -> s_comment
-		"comment_inline" -> s_comment_inline
-		"code" -> s_code
-		_ -> error "bollox"
+		S_String y -> s_string y
+		S_Regexp -> s_regexp
+		S_CommentMulti -> s_comment
+		S_CommentInline -> s_comment_inline
+		S_Code -> s_code
 
 s_code :: StateHandler
-s_code ('/':('/':bs),r) = (("//"++bs,r),"comment_inline")
-s_code ('/':('*':bs),r) = (("/*"++bs,r),"comment")
-s_code ('/':bs,r) = (("/"++bs,r),"regexp")
-s_code ('"':bs,r) = ((['"']++bs,r),"string")
-s_code ('\'':bs,r) = ((['\'']++bs,r),"string")
-s_code (b:bs,r) = ((bs,r++[b]),"code")
-s_code ([],r) = (([],r),"code")
+s_code '/' ('/':rb) = ("",reverse rb,S_CommentInline)
+s_code '*' ('/':rb)  = ("",reverse rb,S_CommentMulti)
+s_code '/' rb = ("/",reverse rb,S_Code)
+
+s_code '"' rb = ("\"",reverse rb,S_String '"')
+s_code '\'' rb = ("'",reverse rb,S_String '\'')
+s_code b rb = ("",reverse (b:rb),S_Code)
+
+s_string :: S_String_Type -> Buffer -> ResultBuffer -> JsminState
+s_string x b rb = do
+	let (rb2,r,switch) = p_simple_string x b rb
+	(rb2,r,if switch then S_Code else S_String x)
+
+p_simple_string::Char -> Buffer -> ResultBuffer -> (ResultBuffer,Result,Bool)
+p_simple_string x b [] 
+	| b == x = ("",[b],True)
+	| otherwise = ([b],"",False)
+
+p_simple_string x b (y:[])
+	| y == '\\' = ("",y:(b:[]),False)
+	| x == b = ("",y:(b:[]),True)
+	| otherwise = ([b],[y],False)
 
 
 s_comment_inline :: StateHandler
-s_comment_inline wr = do
-	let (wr1,_) = until' "\n" ommit wr
-	(wr1,"code")
+s_comment_inline '\n' [] = ("","",S_Code)
+s_comment_inline b [] = ("","",S_CommentInline)
 
 s_comment :: StateHandler
-s_comment (b:[],r) = jsmin_error "comment"
-s_comment wr = do
-	let (wr1,f) = until' "*/" ommit wr
-	if f then (wr1,"code")
-		else jsmin_error "comment"
+s_comment '*' rb = ("*","",S_CommentMulti)
+s_comment '/' ('*':[]) = ("","",S_Code)
+s_comment b rb = ("","",S_CommentMulti)
+
+s_regexp::StateHandler
+s_regexp b rb = do
+	let (rb2,r,switch) = p_simple_string '/' b rb
+	(rb2,r,if switch then S_Code else S_Regexp)
 
 
-s_string::StateHandler
-s_string (bs,r) = p_string (bs,r) (head bs) True
+is_end_state :: StateId -> Bool
+is_end_state sid = 
+	case sid of
+		S_Code -> True
+		S_CommentInline -> True
+		otherwise -> False
 
-s_regexp::StateHandler 
-s_regexp (bs,r) = p_regexp (bs,r) True
+invalid_end_state_msg sid = 
+	"JSMIN: Unterminated " ++ case sid of
+		S_String _ -> "string"
+		S_Regexp -> "regexp"
+		S_CommentMulti -> "comment"
+		_ -> error "ffuuuu"
 
-p_regexp :: WorkReg -> Escaped -> JsminState
-p_regexp ([],r) ed = (([],r),"regexp")
-p_regexp ('\\':bs,r) False = p_regexp (bs,r++"\\") True
-p_regexp ('\\':bs,r) True = p_regexp (bs,r++"\\") False
-p_regexp (b:bs,r) ed
-	| (b == '/') = if (ed == False)
-		then ((bs,r++"/"),"code")
-		else p_regexp (bs,r++[b]) False
-	| True = p_regexp (bs,r++[b]) False
-
-p_string :: ParseString
-p_string ([],r) en ed = (([],r),"string")
-p_string ('\\':bs,r) en False = p_string (bs,r++"\\") en True
-p_string ('\\':bs,r) en True = p_string (bs,r++"\\") en False
-p_string (b:bs,r) en ed
-	| (b == en) = if (ed == False)
-		then ((bs,r++[en]),"code")
-		else p_string (bs,r++[b]) en False
-	| True = p_string (bs,r++[b]) en False
-
-
-is_end_state :: String -> Bool
-is_end_state s = s `elem` ["code"]
-
-jsmin :: State JsminState JsminState
-jsmin = do
-	((b,r),sid) <- get
-	let (reg,sid2) = stateId2Parser(sid) (b,r)
-	put (reg,sid2)
-	if (null (fst reg)) 
-		then if is_end_state(sid2)
-			then return (reg,sid2)
-			else jsmin_error sid2
-		else jsmin
-
-jsmin_error s = error ("Error: Unterminated "++s)
+invalid_end_state sid = hPutStrLn stderr (invalid_end_state_msg sid)
 
 usage :: String -> String
 usage p = "Usage: "++p++" ([<comment>] < <file to minify>) | <-t>"
@@ -177,57 +162,26 @@ main = do
 	args <- getArgs
 	if not (null args) && (head args) == "-t"
 		then run_tests
-		else run_jsmin args
+		else do
+			progname <- getProgName
+			putStrLn $ comment args progname
+			run_jsmin stdin ("",S_Code)
 
-run_jsmin args = do
-	progname <- getProgName
-	putStrLn $ comment args progname
-	input <- getContents
-	let ((b,r),sid) = evalState (jsmin) ((input,""),"code")
-	putStr r
+run_jsmin :: Handle -> (ResultBuffer,StateId) -> IO ()
+run_jsmin handle (rb,sid) = do
+	is_eof <- hIsEOF handle
+	if is_eof
+		then
+			if is_end_state sid
+				then
+					putStr rb
+				else
+					invalid_end_state sid
+		else do
+			input <- hGetChar handle
+			let (rb2,r2,sid2) = stateId2Parser(sid) input rb
+			putStr r2
+			run_jsmin handle (rb2,sid2)
 
-run_tests = do
-	test "comment" "/*a*/b" (("b",""),"code")
-	test "comment" "/*/b" (("",""),"comment")
-	test "comment_inline" "//a" (("",""),"code")
-	test "comment_inline" "//a\nb" (("b",""),"code")
-	test_e "comment" "/*!" (jsmin_error "comment")
-	test "string" "\"a\"b" (("b","\"a\""),"code")
-	test "string" "\"a\\\"b\"c" (("c","\"a\\\"b\""),"code")
-	test "string" "''a" (("a","''"),"code")
-	test "string" "'a'b" (("b","'a'"),"code")
-	test "string" "'a\\'b'c" (("c","'a\\'b'"),"code")
-	test "regexp" "/a/b" (("b","/a/"),"code")
-	test "regexp" "/a\\/b/" (("","/a\\/b/"),"code")
-	test "code" "//a" (("//a",""),"comment_inline")
-	test "code" "'a" (("'a",""),"string")
-	test "code" "\"a" (("\"a",""),"string")
-	test "code" "/*a" (("/*a",""),"comment")
-	test "code" "/a" (("/a",""),"regexp")
-	test "code" "" (("",""),"code")
-	test_until
 
-test_until = do
-	let ((buf,res),_) = until' "dd" (consume) ("adda","")
-	putStrLn "test until' \"dd\" (consume) (\"adda\",\"\")"
-	putStrLn $ "test result: "++(if res == "add" && buf == "a" then "WIN" else "FAIL")
-	putStrLn ""
-	let ((buf,res),_) = until' "dd" (ommit) ("adda","")
-	putStrLn "test until' \"dd\" (ommit) (\"adda\",\"\")"
-	putStrLn $ "test result: "++(if res == "" && buf == "a" then "WIN" else "FAIL")
-	putStrLn ""
-
--- tests if the input state makes correct the nearest state switch
-test :: String -> String -> JsminState -> IO ()
-test state input ((be,re),se) = do
-	let ((b,r),s) = (stateId2Parser state) (input,"")
-	putStrLn $ "test "++state++" "++input
-	putStrLn $"result: "++r ++ " ;buffer: "++b++ " ;state: "++s
-	putStrLn $ "test result: "++(if b == be && r == re && s == se then "WIN" else "FAIL")
-	putStrLn ""
-
--- @TODO
-test_e state input e = do
-		let ((b,r),s) = (stateId2Parser state) (input,"")
-		putStrLn ""
-
+run_tests = putStrLn "not implemented"
