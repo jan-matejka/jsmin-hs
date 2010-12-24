@@ -171,7 +171,7 @@ invalid_end_state_msg sid =
 invalid_end_state sid = hPutStrLn stderr (invalid_end_state_msg sid)
 
 usage :: String -> String
-usage p = "Usage: "++p++" ([<comment>] < <file to minify>) | <-t>"
+usage p = "Usage: "++p++" ([<comment>] < <file to minify>) | <-h>"
 
 comment :: [String] -> String -> String
 comment (x:[]) _ = "// "++x
@@ -181,8 +181,10 @@ comment ([]) _ = ""
 main = do
 	progname <- getProgName
 	args <- getArgs
-	if not (null args) && (head args) == "-t"
-		then run_tests
+	if not (null args) && (head args) == "-h"
+		then do
+			progname <- getProgName
+			putStrLn $ usage progname
 		else do
 			progname <- getProgName
 			putStrLn $ comment args progname
@@ -204,5 +206,3 @@ run_jsmin handle (rb,sid) = do
 			putStr r2
 			run_jsmin handle (rb2,sid2)
 
-
-run_tests = putStrLn "not implemented"
