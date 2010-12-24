@@ -199,8 +199,9 @@ run_jsmin handle (rb,sid) = do
 			if is_end_state sid
 				then
 					putStr rb
-				else
+				else do
 					invalid_end_state sid
+					exitWith (ExitFailure 65)
 		else do
 			input <- hGetChar handle
 			let (rb2,r2,sid2) = stateId2Parser(sid) input rb
