@@ -34,34 +34,34 @@ import Control.Monad.State
 import Maybe
 
 is_wsp :: Char -> Bool
-is_wsp x = elem (ord x) (range(0,9)++[11,12,127]++range(14,32))
+is_wsp x = elem (ord x) ([0..9]++[11,12,127]++[14..32])
 
 cr_or_lf :: Char -> Bool
 cr_or_lf x = elem x "\n\r"
 
 is_alphanum :: Char -> Bool
-is_alphanum x = elem (ord x) (range(48,57)++range(65,90)++range(97,122))
+is_alphanum x = elem (ord x) ([48..57]++[65..90]++[97..122])
 
 wsp_keeper :: Char -> Bool
 wsp_keeper x
 	| is_alphanum x = True
 	| elem x "\\$_" = True
-	| True = False
+	| otherwise = False
 
 nl_pre_keeper :: Char -> Bool
 nl_pre_keeper x
 	| is_alphanum x = True
 	| elem x "\\$_}])+-\"'" = True
-	| True = False
+	| otherwise = False
 
 nl_post_keeper :: Char -> Bool
 nl_post_keeper x
 	| is_alphanum x = True
 	| elem x "\\$_{[(+-" = True
-	| True = False
+	| otherwise = False
 
 re_pre_keeper :: Char -> Bool
-re_pre_keeper x = elem x "(,=:[!&|?{};\n"
+re_pre_keeper x = elem x "(,=:[!&|?{};"
 
 type Buffer = Char
 type Result = String
@@ -70,7 +70,7 @@ type S_String_Type = Char -- " or '
 data StateId = S_String S_String_Type
 	| S_Code
 	| S_Regexp
-	| S_CommentInline
+	| S_CommentInline ResultBuffer
 	| S_CommentMulti
 	deriving (Show) -- for debug
 
@@ -90,23 +90,36 @@ stateId2Parser x =
 		S_String y -> s_string y
 		S_Regexp -> s_regexp
 		S_CommentMulti -> s_comment
-		S_CommentInline -> s_comment_inline
+		S_CommentInline pre_rb -> s_comment_inline pre_rb
 		S_Code -> s_code
 
 s_code :: StateHandler
-s_code '/' ('/':rb) = ("",reverse rb,S_CommentInline)
+s_code '/' ('/':rb) = ("","",S_CommentInline rb)
 s_code '*' ('/':rb)  = ("",reverse rb,S_CommentMulti)
-s_code b ('/':rb) = ("",reverse (b:('/':rb)),S_Regexp)
-s_code '/' rb = ("/",reverse rb,S_Code)
+s_code b ('/':rb)
+	| re_pre_keeper (head rb) = ("",reverse (b:('/':rb)),S_Regexp)
+	| otherwise = ([b],reverse ('/':rb),S_Code)
+s_code '/' rb = ("/"++rb,"",S_Code)
 
 s_code '"' rb = ("\"",reverse rb,S_String '"')
 s_code '\'' rb = ("'",reverse rb,S_String '\'')
 
-s_code b [] = ([b],"",S_Code)
+s_code b []
+	| cr_or_lf b || is_wsp b = ([],"",S_Code)
+	| otherwise = ([b],"",S_Code)
+
 s_code b (y:rb)
-	| is_wsp b && wsp_keeper y = ((b:[y]),reverse rb,S_Code)
-	| is_wsp b && is_wsp y = ((y:rb),"",S_Code)
-	| otherwise = ("",reverse (b:(y:rb)),S_Code)
+	| (is_wsp b || cr_or_lf b) && wsp_keeper y = ((b:[y]),reverse rb,S_Code)
+	| not (wsp_keeper b) && (is_wsp y || cr_or_lf y) = (((prefer_lf b y):rb),"",S_Code)
+	| (is_wsp b && not (wsp_keeper y))
+		|| (cr_or_lf b && not (nl_pre_keeper y)) = ([y],reverse rb,S_Code)
+	| cr_or_lf y && not (nl_post_keeper b) = ([b],reverse rb,S_Code)
+	| otherwise = ([b],reverse (y:rb),S_Code)
+
+prefer_lf x y
+	| cr_or_lf x || cr_or_lf y = '\n'
+	| is_wsp x = ' '
+	| otherwise = x
 
 s_string :: S_String_Type -> Buffer -> ResultBuffer -> JsminState
 s_string x b rb = do
@@ -124,9 +137,10 @@ p_simple_string x b (y:[])
 	| otherwise = ([b],[y],False)
 
 
-s_comment_inline :: StateHandler
-s_comment_inline '\n' [] = ("\n","",S_Code)
-s_comment_inline b [] = ("","",S_CommentInline)
+s_comment_inline :: ResultBuffer -> Buffer -> ResultBuffer -> (ResultBuffer,Result,StateId)
+s_comment_inline pre_rb b []
+	| cr_or_lf b  = (stateId2Parser S_Code) '\n' pre_rb
+	| otherwise = ("","",S_CommentInline pre_rb)
 
 s_comment :: StateHandler
 s_comment '*' rb = ("*","",S_CommentMulti)
@@ -143,7 +157,7 @@ is_end_state :: StateId -> Bool
 is_end_state sid = 
 	case sid of
 		S_Code -> True
-		S_CommentInline -> True
+		S_CommentInline pre_rb -> True
 		otherwise -> False
 
 invalid_end_state_msg sid = 
