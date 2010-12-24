@@ -34,13 +34,13 @@ import Control.Monad.State
 import Maybe
 
 is_wsp :: Char -> Bool
-is_wsp x = elem x (map chr (range(0,9)++[11,12,127]++range(14,32)))
+is_wsp x = elem (ord x) (range(0,9)++[11,12,127]++range(14,32))
 
 cr_or_lf :: Char -> Bool
 cr_or_lf x = elem x "\n\r"
 
 is_alphanum :: Char -> Bool
-is_alphanum x = elem x (map chr (range(48,57)++range(65,90)++range(97,122)))
+is_alphanum x = elem (ord x) (range(48,57)++range(65,90)++range(97,122))
 
 wsp_keeper :: Char -> Bool
 wsp_keeper x
@@ -101,8 +101,12 @@ s_code '/' rb = ("/",reverse rb,S_Code)
 
 s_code '"' rb = ("\"",reverse rb,S_String '"')
 s_code '\'' rb = ("'",reverse rb,S_String '\'')
-s_code b rb = ("",reverse (b:rb),S_Code)
 
+s_code b [] = ([b],"",S_Code)
+s_code b (y:rb)
+	| is_wsp b && wsp_keeper y = ((b:[y]),reverse rb,S_Code)
+	| is_wsp b && is_wsp y = ((y:rb),"",S_Code)
+	| otherwise = ("",reverse (b:(y:rb)),S_Code)
 
 s_string :: S_String_Type -> Buffer -> ResultBuffer -> JsminState
 s_string x b rb = do
@@ -121,7 +125,7 @@ p_simple_string x b (y:[])
 
 
 s_comment_inline :: StateHandler
-s_comment_inline '\n' [] = ("","",S_Code)
+s_comment_inline '\n' [] = ("\n","",S_Code)
 s_comment_inline b [] = ("","",S_CommentInline)
 
 s_comment :: StateHandler
