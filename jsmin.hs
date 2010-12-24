@@ -96,6 +96,7 @@ stateId2Parser x =
 s_code :: StateHandler
 s_code '/' ('/':rb) = ("","",S_CommentInline rb)
 s_code '*' ('/':rb)  = ("",reverse rb,S_CommentMulti)
+s_code b ('/':(' ':rb)) = s_code b ('/':rb)
 s_code b ('/':rb)
 	| re_pre_keeper (head rb) = ("",reverse (b:('/':rb)),S_Regexp)
 	| otherwise = ([b],reverse ('/':rb),S_Code)
@@ -109,17 +110,17 @@ s_code b []
 	| otherwise = ([b],"",S_Code)
 
 s_code b (y:rb)
-	| (is_wsp b || cr_or_lf b) && wsp_keeper y = ((b:[y]),reverse rb,S_Code)
-	| not (wsp_keeper b) && (is_wsp y || cr_or_lf y) = (((prefer_lf b y):rb),"",S_Code)
-	| (is_wsp b && not (wsp_keeper y))
-		|| (cr_or_lf b && not (nl_pre_keeper y)) = ([y],reverse rb,S_Code)
-	| cr_or_lf y && not (nl_post_keeper b) = ([b],reverse rb,S_Code)
-	| otherwise = ([b],reverse (y:rb),S_Code)
+	| is_wsp b && is_wsp y = (y:rb,"",S_Code)
+	| is_wsp b && wsp_keeper y  = ((b:[y]),reverse rb,S_Code)
+	| is_wsp b && not (wsp_keeper y) = (y:rb,"",S_Code)
+	| cr_or_lf b && is_wsp y = s_code b rb
+	| cr_or_lf b && cr_or_lf y = (y:rb,"",S_Code)
+	| is_wsp b && cr_or_lf y = (y:rb,"",S_Code)
 
-prefer_lf x y
-	| cr_or_lf x || cr_or_lf y = '\n'
-	| is_wsp x = ' '
-	| otherwise = x
+	| is_wsp y && not (wsp_keeper b) = ([b],reverse rb,S_Code)
+	| cr_or_lf y && not (nl_post_keeper b) = ([b],reverse rb, S_Code)
+
+	| otherwise = ([b],reverse (y:rb),S_Code)
 
 s_string :: S_String_Type -> Buffer -> ResultBuffer -> JsminState
 s_string x b rb = do
