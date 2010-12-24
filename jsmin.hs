@@ -115,6 +115,7 @@ s_code b (y:rb)
 	| is_wsp b && not (wsp_keeper y) = (y:rb,"",S_Code)
 	| cr_or_lf b && is_wsp y = s_code b rb
 	| cr_or_lf b && cr_or_lf y = (y:rb,"",S_Code)
+	| cr_or_lf b && not (nl_pre_keeper y) = (y:rb,"",S_Code)
 	| is_wsp b && cr_or_lf y = (y:rb,"",S_Code)
 
 	| is_wsp y && not (wsp_keeper b) = ([b],reverse rb,S_Code)
