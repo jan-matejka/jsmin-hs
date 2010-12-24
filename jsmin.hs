@@ -96,11 +96,13 @@ stateId2Parser x =
 s_code :: StateHandler
 s_code '/' ('/':rb) = ("",reverse rb,S_CommentInline)
 s_code '*' ('/':rb)  = ("",reverse rb,S_CommentMulti)
+s_code b ('/':rb) = ("",reverse (b:('/':rb)),S_Regexp)
 s_code '/' rb = ("/",reverse rb,S_Code)
 
 s_code '"' rb = ("\"",reverse rb,S_String '"')
 s_code '\'' rb = ("'",reverse rb,S_String '\'')
 s_code b rb = ("",reverse (b:rb),S_Code)
+
 
 s_string :: S_String_Type -> Buffer -> ResultBuffer -> JsminState
 s_string x b rb = do
